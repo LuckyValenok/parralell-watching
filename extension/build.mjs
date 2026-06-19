@@ -61,10 +61,18 @@ async function buildAll() {
   copyFileSync(join(__dirname, 'src/popup.html'), join(dist, 'popup.html'));
   copyFileSync(join(__dirname, 'src/popup.css'), join(dist, 'popup.css'));
 
+  const iconsSrc = join(__dirname, 'icons');
   const iconsDir = join(dist, 'icons');
   mkdirSync(iconsDir, { recursive: true });
   for (const size of [16, 48, 128]) {
-    writeFileSync(join(iconsDir, `icon${size}.png`), minimalPng(size));
+    const name = `icon${size}.png`;
+    const src = join(iconsSrc, name);
+    const dest = join(iconsDir, name);
+    if (existsSync(src)) {
+      copyFileSync(src, dest);
+    } else {
+      writeFileSync(dest, minimalPng(size));
+    }
   }
 
   console.log(watch ? 'Watching extension...' : 'Extension built → extension/dist/');
