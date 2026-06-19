@@ -1,0 +1,147 @@
+body {
+  width: 280px;
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #0f0f13;
+  color: #e8e8f0;
+}
+
+.popup {
+  padding: 16px;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 2px;
+}
+
+.subtitle {
+  font-size: 11px;
+  color: #8888a0;
+  margin: 0 0 12px;
+}
+
+label {
+  display: block;
+  font-size: 11px;
+  color: #8888a0;
+  margin-bottom: 4px;
+  margin-top: 8px;
+}
+
+input {
+  width: 100%;
+  padding: 8px 10px;
+  background: #1a1a24;
+  border: 1px solid #2a2a3a;
+  border-radius: 6px;
+  color: #e8e8f0;
+  font-size: 14px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+input:focus {
+  border-color: #6c5ce7;
+}
+
+.btn {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-top: 12px;
+}
+
+.btn.primary {
+  background: #6c5ce7;
+  color: white;
+}
+
+.btn.primary:hover {
+  background: #7c6ef7;
+}
+
+.btn.secondary {
+  background: #22222f;
+  color: #e8e8f0;
+  border: 1px solid #2a2a3a;
+}
+
+.hidden {
+  display: none;
+}
+
+.status {
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.status.connected {
+  background: rgba(0, 184, 148, 0.15);
+  color: #00b894;
+}
+
+.status.disconnected {
+  background: rgba(136, 136, 160, 0.15);
+  color: #8888a0;
+}
+
+.role {
+  font-size: 11px;
+  color: #8888a0;
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
+.update-banner {
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(225, 112, 85, 0.12);
+  border: 1px solid rgba(225, 112, 85, 0.35);
+}
+
+.update-text {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #f0c4b8;
+  margin: 0 0 8px;
+}
+
+.update-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn.update {
+  flex: 1;
+  margin-top: 0;
+  padding: 7px;
+  font-size: 12px;
+  text-align: center;
+  text-decoration: none;
+  display: block;
+  box-sizing: border-box;
+}
+
+.btn.update.primary {
+  background: #e17055;
+  color: #fff;
+}
+
+.btn.update.primary:hover {
+  background: #e8836b;
+}
+
+.btn.update.secondary {
+  background: transparent;
+  color: #c8c8d8;
+  border: 1px solid #3a3a4a;
+}

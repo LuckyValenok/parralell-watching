@@ -1,0 +1,22 @@
+node_modules/
+dist/
+extension/*.zip
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+shared/*.js
+!shared/providers/
+
+# Vite cache
+.vite/
+**/.vite/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

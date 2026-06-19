@@ -1,0 +1,17 @@
+[Unit]
+Description=Parallel Watching sync server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/parallel-watching
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=CORS_ORIGINS=https://YOUR_DOMAIN,http://localhost:5173
+ExecStart=/usr/bin/node server/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

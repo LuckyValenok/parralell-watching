@@ -1,0 +1,21 @@
+{
+  "name": "parralell-watching",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Совместный просмотр сериалов и фильмов на HDRezka с друзьями",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:web": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=server && npm run build --workspace=web",
+    "build:extension": "npm run build --workspace=extension"
+  },
+  "workspaces": [
+    "server",
+    "web",
+    "extension"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

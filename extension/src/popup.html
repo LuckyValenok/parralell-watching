@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="popup">
+      <h1>Parallel Watching</h1>
+      <p class="subtitle">HDRezka sync · v<span id="version"></span></p>
+
+      <div id="update-banner" class="update-banner hidden" hidden>
+        <p id="update-text" class="update-text"></p>
+        <div class="update-actions">
+          <a id="update-download" class="btn update primary" href="#" target="_blank" rel="noopener">Скачать</a>
+          <button id="update-dismiss" type="button" class="btn update secondary">Позже</button>
+        </div>
+      </div>
+
+      <div id="status" class="status disconnected">Не подключено</div>
+      <p id="role" class="role">Создайте комнату на сайте — расширение подключится само</p>
+
+      <label for="room">Код комнаты</label>
+      <input id="room" type="text" placeholder="ABC123" maxlength="6" />
+
+      <label for="name">Ваше имя</label>
+      <input id="name" type="text" placeholder="Гость" maxlength="24" />
+
+      <button id="connect" class="btn primary">Подключиться</button>
+      <button id="disconnect" class="btn secondary hidden">Отключиться</button>
+    </div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,49 @@
+name: Extension Release
+
+on:
+  push:
+    tags:
+      - 'extension-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Set manifest version from tag
+        id: version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#extension-v}"
+          if ! [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag must be extension-v<semver>, got: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          node extension/sync-version.mjs "$TAG_VERSION"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+
+      - name: Build extension
+        env:
+          EXTENSION_SERVER_URL: ${{ secrets.EXTENSION_SERVER_URL }}
+          EXTENSION_WEB_ORIGINS: ${{ secrets.EXTENSION_WEB_ORIGINS }}
+          PW_GITHUB_REPO: LuckyValenok/parralell-watching
+        run: npm run build:extension
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Extension v${{ steps.version.outputs.version }}
+          files: extension/parallel-watching-extension-v*.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
