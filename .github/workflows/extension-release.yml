@@ -11,6 +11,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: extension
     steps:
       - uses: actions/checkout@v4
 
@@ -34,8 +35,8 @@ jobs:
 
       - name: Build extension
         env:
-          EXTENSION_SERVER_URL: ${{ secrets.EXTENSION_SERVER_URL }}
-          EXTENSION_WEB_ORIGINS: ${{ secrets.EXTENSION_WEB_ORIGINS }}
+          EXTENSION_SERVER_URL: ${{ vars.EXTENSION_SERVER_URL || secrets.EXTENSION_SERVER_URL }}
+          EXTENSION_WEB_ORIGINS: ${{ vars.EXTENSION_WEB_ORIGINS || secrets.EXTENSION_WEB_ORIGINS }}
           PW_GITHUB_REPO: LuckyValenok/parralell-watching
         run: npm run build:extension
 

@@ -105,12 +105,14 @@ git push origin extension-v1.0.1
 
 GitHub Actions соберёт zip и опубликует его в [Releases](https://github.com/LuckyValenok/parralell-watching/releases).
 
-Опциональные secrets репозитория для prod-сборки в CI:
+Сборка использует GitHub Environment **`extension`**. Добавьте туда variables (или secrets):
 
-| Secret | Описание |
-|---|---|
-| `EXTENSION_SERVER_URL` | URL sync-сервера в сборке релиза |
-| `EXTENSION_WEB_ORIGINS` | Origins веб-приложения (через запятую) |
+| Variable | Пример | Описание |
+|---|---|---|
+| `EXTENSION_SERVER_URL` | `https://watch.luckyvalenok.ru` | URL sync-сервера в сборке |
+| `EXTENSION_WEB_ORIGINS` | `https://watch.luckyvalenok.ru` | Origins веб-приложения (через запятую) |
+
+Settings → Environments → **extension** → Environment variables.
 
 Расширение само проверяет обновления через GitHub Releases API (каждые 6 часов) и показывает баннер в popup.
 

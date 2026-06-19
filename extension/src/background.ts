@@ -19,10 +19,10 @@ import {
 } from './updates.js';
 
 declare const __PW_DEFAULT_SERVER__: string;
-declare const __PW_BUILTIN_WEB_ORIGINS__: string;
+declare const __PW_BUILTIN_WEB_ORIGINS__: string[];
 
 const DEFAULT_SERVER = __PW_DEFAULT_SERVER__;
-const BUILTIN_WEB_ORIGINS: string[] = JSON.parse(__PW_BUILTIN_WEB_ORIGINS__);
+const BUILTIN_WEB_ORIGINS: string[] = __PW_BUILTIN_WEB_ORIGINS__;
 
 function webAppOrigins(): string[] {
   const origins = [...BUILTIN_WEB_ORIGINS];
