@@ -6,6 +6,7 @@ import {
   isSocketConnected,
   queueRoomMessage,
   sendRoomMessage,
+  setSocketConnectHandler,
   setSocketMessageHandler,
 } from './socket.js';
 import { isSupportedWatchUrl, registry, resolveNavigateUrl, watchTargetKey } from '../../shared/providers/index.js';
@@ -46,10 +47,27 @@ interface StoredState {
 
 interface RoomPayload {
   videoUrl: string | null;
-  members: { id: string; isHost: boolean }[];
+  members: {
+    id: string;
+    isHost: boolean;
+    name?: string;
+    connected?: boolean;
+    buffering?: boolean;
+    onPlayer?: boolean;
+  }[];
+  hasPassword?: boolean;
+  waitingBuffer?: boolean;
+  isPlaying?: boolean;
+  currentTime?: number;
 }
 
 setSocketMessageHandler(handleServerMessage);
+setSocketConnectHandler((status) => {
+  void browser.storage.local.set({ socketStatus: status });
+  void broadcastToWatchTabs({ type: 'connection-status', status });
+});
+
+let lastRoom: RoomPayload | null = null;
 
 let lastOpenedWatchUrl: string | null = null;
 let lastRoomVideoUrl: string | null = null;
@@ -131,7 +149,23 @@ async function handleMessage(
   switch (message.type) {
     case 'get-state':
       await syncFromWebTabs();
-      return { ...state, connected: isSocketConnected() };
+      return {
+        ...state,
+        userId: state.userId,
+        connected: isSocketConnected(),
+        socketStatus: isSocketConnected() ? 'connected' : 'reconnecting',
+        room: lastRoom,
+      };
+
+    case 'sync-from-web':
+      await syncFromWebTabs();
+      return {
+        ...state,
+        userId: state.userId,
+        connected: isSocketConnected(),
+        socketStatus: isSocketConnected() ? 'connected' : 'reconnecting',
+        room: lastRoom,
+      };
 
     case 'get-update-info':
       return getExtensionUpdateInfo();
@@ -149,10 +183,6 @@ async function handleMessage(
       return { ok: Boolean(state.roomId) };
     }
 
-    case 'sync-from-web':
-      await syncFromWebTabs();
-      return { ...state, connected: isSocketConnected() };
-
     case 'web-session':
       await applySession(message.session as WatchSession);
       return { ok: true };
@@ -164,12 +194,13 @@ async function handleMessage(
     case 'join-room': {
       const roomId = (message.roomId as string).toUpperCase();
       const userName = (message.userName as string) || 'Гость';
+      const password = message.password as string | undefined;
       const userId = (message.userId as string | undefined) ?? state.userId;
       state.roomId = roomId;
       state.userName = userName;
       if (userId) state.userId = userId;
       await browser.storage.local.set({ roomId, userName, userId: state.userId });
-      connectSocket();
+      connectSocket(password);
       return { ok: true };
     }
 
@@ -229,6 +260,40 @@ async function handleMessage(
       return { ok: sent || isSocketConnected() };
     }
 
+    case 'local-buffer': {
+      if (!state.roomId || !state.userId) return { ok: false };
+      const buffering = Boolean(message.buffering);
+      const payload = {
+        action: 'sync',
+        sync: {
+          type: buffering ? 'buffer-start' : 'buffer-end',
+          roomId: state.roomId,
+          userId: state.userId,
+        },
+      };
+      const sent = sendRoomMessage(payload);
+      if (!sent) queueRoomMessage(payload);
+      return { ok: sent || isSocketConnected() };
+    }
+
+    case 'player-presence': {
+      if (!state.roomId) return { ok: false };
+      const sent = sendRoomMessage({
+        action: 'player-presence',
+        onPlayer: Boolean(message.onPlayer),
+      });
+      return { ok: sent || isSocketConnected() };
+    }
+
+    case 'transfer-host': {
+      if (!state.roomId || !message.targetUserId) return { ok: false };
+      const sent = sendRoomMessage({
+        action: 'transfer-host',
+        targetUserId: message.targetUserId as string,
+      });
+      return { ok: sent || isSocketConnected() };
+    }
+
     case 'local-chat': {
       if (!state.roomId || !state.userId) return { ok: false };
       const text = (message.text as string | undefined)?.trim();
@@ -278,6 +343,7 @@ async function clearRoomState(): Promise<void> {
   lastOpenedWatchUrl = null;
   lastRoomVideoUrl = null;
   chatHistoryCache = [];
+  lastRoom = null;
   clearPendingMessages();
   await browser.storage.local.set({ roomId: null, userId: null, isHost: false, lastPublishedWatchKey: null });
   await browser.storage.session.remove('lastOpenedWatchUrl');
@@ -333,7 +399,7 @@ async function syncFromWebTabs(): Promise<void> {
   }
 }
 
-function connectSocket() {
+function connectSocket(password?: string) {
   if (!state.roomId) return;
   disconnectSocket();
   connectRoomSocket(state.serverUrl, {
@@ -341,6 +407,7 @@ function connectSocket() {
     roomId: state.roomId,
     userName: state.userName,
     userId: state.userId ?? undefined,
+    password: password || undefined,
   });
 }
 
@@ -360,6 +427,7 @@ function handleServerMessage(msg: Record<string, unknown>) {
       state.userId = userId;
       const room = msg.room as RoomPayload | undefined;
       if (room) {
+        lastRoom = room;
         updateHostFlag(room, userId);
         if (room.videoUrl) void maybeOpenWatchUrl(room.videoUrl);
       }
@@ -367,13 +435,19 @@ function handleServerMessage(msg: Record<string, unknown>) {
       flushPendingMessages();
       break;
     }
-    case 'room-state': {
+    case 'room-state':
+    case 'members-updated': {
       const room = msg.room as RoomPayload;
-      if (room && state.userId) updateHostFlag(room, state.userId);
-      if (room?.videoUrl && !state.isHost && room.videoUrl !== lastRoomVideoUrl) {
-        lastRoomVideoUrl = room.videoUrl;
-        void pushNavigateToGuestTabs(room.videoUrl);
+      if (room) {
+        lastRoom = room;
+        if (state.userId) updateHostFlag(room, state.userId);
+        const prevVideo = lastRoomVideoUrl;
+        if (room.videoUrl && !state.isHost && room.videoUrl !== prevVideo) {
+          lastRoomVideoUrl = room.videoUrl;
+          void pushNavigateToGuestTabs(room.videoUrl);
+        }
       }
+      void broadcastToWatchTabs({ type: 'room-updated', room });
       break;
     }
     case 'sync': {
@@ -398,6 +472,9 @@ function handleServerMessage(msg: Record<string, unknown>) {
         if (chatHistoryCache.length > 100) {
           chatHistoryCache.splice(0, chatHistoryCache.length - 100);
         }
+      }
+      if (chat.userId !== state.userId) {
+        void notifyChatIfBackground(chat);
       }
       void broadcastToWatchTabs({ type: 'chat-message', chat });
       break;
@@ -429,6 +506,24 @@ function updateHostFlag(
 ): void {
   state.isHost = room.members.find((m) => m.id === userId)?.isHost ?? false;
   browser.storage.local.set({ isHost: state.isHost });
+}
+
+async function notifyChatIfBackground(chat: ChatMessage): Promise<void> {
+  const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+  const activeUrl = tabs[0]?.url ?? '';
+  if (activeUrl && isSupportedWatchUrl(activeUrl)) return;
+
+  try {
+    await browser.notifications.create(`pw-chat-${chat.id}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: chat.userName,
+      message: chat.text.slice(0, 120),
+      silent: false,
+    });
+  } catch {
+    // notifications permission not granted
+  }
 }
 
 async function respondToSyncRequest(): Promise<void> {

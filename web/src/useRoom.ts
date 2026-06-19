@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { isSupportedWatchUrl } from './mirrors';
 import { clearWatchSession, loadWatchSession, saveWatchSession } from './session';
-import type { ChatMessage, ClientMessage, RoomState, ServerMessage } from './types';
+import type { ChatMessage, ClientMessage, ConnectionStatus, RoomState, ServerMessage } from './types';
 
 const SERVER_URL =
   import.meta.env.VITE_SERVER_URL ||
@@ -20,7 +20,8 @@ export function useRoom() {
   const [room, setRoom] = useState<RoomState | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [errorCode, setErrorCode] = useState<ServerMessage['errorCode'] | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const persistRoom = useCallback((nextRoom: RoomState, memberId: string) => {
@@ -52,11 +53,22 @@ export function useRoom() {
   }, []);
 
   useEffect(() => {
-    const socket = io(SERVER_URL, { transports: ['websocket', 'polling'] });
+    const socket = io(SERVER_URL, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1500,
+      reconnectionAttempts: Infinity,
+    });
     socketRef.current = socket;
 
-    socket.on('connect', () => setConnected(true));
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('connect', () => setConnectionStatus('connected'));
+    socket.on('disconnect', () => {
+      if (!leftRef.current) setConnectionStatus('reconnecting');
+      else setConnectionStatus('disconnected');
+    });
+    socket.io.on('reconnect_attempt', () => setConnectionStatus('reconnecting'));
+    socket.io.on('reconnect', () => setConnectionStatus('connected'));
+    socket.io.on('reconnect_failed', () => setConnectionStatus('disconnected'));
 
     socket.on('message', (msg: ServerMessage) => {
       if (leftRef.current) return;
@@ -71,6 +83,7 @@ export function useRoom() {
             persistRoom(msg.room, msg.userId);
           }
           setError(null);
+          setErrorCode(null);
           break;
         case 'chat-history':
           if (msg.chatHistory) {
@@ -105,6 +118,7 @@ export function useRoom() {
           break;
         case 'error':
           setError(msg.error ?? 'Неизвестная ошибка');
+          setErrorCode(msg.errorCode ?? null);
           break;
       }
     });
@@ -115,7 +129,7 @@ export function useRoom() {
   }, [persistRoom]);
 
   useEffect(() => {
-    if (!connected || restoredRef.current || room) return;
+    if (connectionStatus !== 'connected' || restoredRef.current || room) return;
     const session = loadWatchSession();
     if (!session) return;
 
@@ -126,26 +140,28 @@ export function useRoom() {
       userName: session.userName,
       userId: session.userId,
     } satisfies ClientMessage);
-  }, [connected, room]);
+  }, [connectionStatus, room]);
 
   const send = useCallback((msg: ClientMessage) => {
     socketRef.current?.emit('message', msg);
   }, []);
 
   const createRoom = useCallback(
-    (userName: string) => {
+    (userName: string, password?: string) => {
       leftRef.current = false;
       setError(null);
-      send({ action: 'create-room', userName });
+      setErrorCode(null);
+      send({ action: 'create-room', userName, password: password || undefined });
     },
     [send]
   );
 
   const joinRoom = useCallback(
-    (roomId: string, userName: string) => {
+    (roomId: string, userName: string, password?: string) => {
       leftRef.current = false;
       setError(null);
-      send({ action: 'join-room', roomId, userName });
+      setErrorCode(null);
+      send({ action: 'join-room', roomId, userName, password: password || undefined });
     },
     [send]
   );
@@ -157,12 +173,20 @@ export function useRoom() {
     setRoom(null);
     setUserId(null);
     setChatMessages([]);
+    setConnectionStatus('disconnected');
     clearWatchSession();
   }, [send]);
 
   const setVideoUrl = useCallback(
     (videoUrl: string) => {
       send({ action: 'set-video-url', videoUrl });
+    },
+    [send]
+  );
+
+  const transferHost = useCallback(
+    (targetUserId: string) => {
+      send({ action: 'transfer-host', targetUserId });
     },
     [send]
   );
@@ -187,12 +211,14 @@ export function useRoom() {
     room,
     userId,
     error,
-    connected,
+    errorCode,
+    connectionStatus,
     chatMessages,
     createRoom,
     joinRoom,
     leaveRoom,
     setVideoUrl,
+    transferHost,
     sendChat,
     sendReaction,
   };

@@ -6,14 +6,21 @@ import type { ClientMessage, SyncEvent } from './types.js';
 import {
   addChatMessage,
   bindSocket,
+  checkBufferResume,
+  clearResumeAfterBuffer,
   createRoom,
+  electHost,
   getChatHistory,
   getRoom,
   joinRoom,
   leaveRoom,
+  setMemberBuffering,
   setMemberConnected,
+  setMemberOnPlayer,
   toggleChatReaction,
+  transferHost,
   updateRoomState,
+  verifyRoomPassword,
 } from './rooms.js';
 
 const MAX_CHAT_LENGTH = 500;
@@ -52,7 +59,7 @@ io.on('connection', (socket) => {
     switch (raw.action) {
       case 'create-room': {
         const userName = raw.userName?.trim() || 'Гость';
-        const { room, userId } = createRoom(userName);
+        const { room, userId } = createRoom(userName, raw.password);
         bindSocket(room.id, userId, socket.id);
         sessions.set(socket.id, { roomId: room.id, userId });
         socket.join(room.id);
@@ -71,6 +78,23 @@ io.on('connection', (socket) => {
         let result: { room: import('./types.js').RoomState; userId: string } | null = null;
 
         if (existing) {
+          if (existing.passwordHash && !verifyRoomPassword(roomId, raw.password)) {
+            if (!raw.password?.trim()) {
+              socket.emit('message', {
+                type: 'error',
+                error: 'Для этой комнаты нужен пароль',
+                errorCode: 'password-required',
+              });
+              return;
+            }
+            socket.emit('message', {
+              type: 'error',
+              error: 'Неверный пароль',
+              errorCode: 'wrong-password',
+            });
+            return;
+          }
+
           if (raw.userId) {
             const byId = existing.state.members.find((m) => m.id === raw.userId);
             if (byId) {
@@ -91,13 +115,30 @@ io.on('connection', (socket) => {
         }
 
         if (!result) {
-          result = joinRoom(roomId, userName);
+          const joined = joinRoom(roomId, userName, raw.password);
+          if (joined === 'not-found') {
+            socket.emit('message', { type: 'error', error: 'Комната не найдена' });
+            return;
+          }
+          if (joined === 'password-required') {
+            socket.emit('message', {
+              type: 'error',
+              error: 'Для этой комнаты нужен пароль',
+              errorCode: 'password-required',
+            });
+            return;
+          }
+          if (joined === 'wrong-password') {
+            socket.emit('message', {
+              type: 'error',
+              error: 'Неверный пароль',
+              errorCode: 'wrong-password',
+            });
+            return;
+          }
+          result = joined;
         }
 
-        if (!result) {
-          socket.emit('message', { type: 'error', error: 'Комната не найдена' });
-          return;
-        }
         bindSocket(roomId, result.userId, socket.id);
         sessions.set(socket.id, { roomId, userId: result.userId });
         socket.join(roomId);
@@ -136,6 +177,36 @@ io.on('connection', (socket) => {
         const session = sessions.get(socket.id);
         if (!session || !raw.sync) return;
         handleSync(session.roomId, session.userId, raw.sync);
+        break;
+      }
+
+      case 'transfer-host': {
+        const session = sessions.get(socket.id);
+        if (!session || !raw.targetUserId) return;
+
+        const result = transferHost(session.roomId, session.userId, raw.targetUserId);
+        if (result === 'not-host') {
+          socket.emit('message', { type: 'error', error: 'Только хост может передать роль', errorCode: 'not-host' });
+          return;
+        }
+        if (result === 'member-not-found') {
+          socket.emit('message', { type: 'error', error: 'Участник не найден', errorCode: 'member-not-found' });
+          return;
+        }
+        if (result) {
+          io.to(session.roomId).emit('message', { type: 'members-updated', room: result });
+        }
+        break;
+      }
+
+      case 'player-presence': {
+        const session = sessions.get(socket.id);
+        if (!session || raw.onPlayer === undefined) return;
+
+        const state = setMemberOnPlayer(session.roomId, session.userId, raw.onPlayer);
+        if (state) {
+          io.to(session.roomId).emit('message', { type: 'members-updated', room: state });
+        }
         break;
       }
 
@@ -196,14 +267,39 @@ function handleSync(roomId: string, userId: string, event: SyncEvent): void {
   if (!room) return;
 
   switch (event.type) {
-    case 'play':
+    case 'buffer-start': {
+      const result = setMemberBuffering(roomId, userId, true);
+      if (!result) return;
+
+      if (result.pausedAll) {
+        broadcastPause(roomId, userId, result.state.currentTime);
+      }
+      io.to(roomId).emit('message', { type: 'members-updated', room: result.state });
+      return;
+    }
+
+    case 'buffer-end': {
+      const result = setMemberBuffering(roomId, userId, false);
+      if (!result) return;
+
+      if (result.resumedAll) {
+        broadcastPlay(roomId, userId, result.state.currentTime);
+      }
+      io.to(roomId).emit('message', { type: 'members-updated', room: result.state });
+      return;
+    }
+
+    case 'play': {
+      if (room.state.waitingBuffer) return;
       updateRoomState(roomId, { isPlaying: true, currentTime: event.timestamp ?? 0 });
       break;
+    }
     case 'pause':
       updateRoomState(roomId, {
         isPlaying: false,
         currentTime: event.timestamp ?? room.state.currentTime,
       });
+      clearResumeAfterBuffer(roomId);
       break;
     case 'seek':
       updateRoomState(roomId, { currentTime: event.timestamp ?? 0 });
@@ -216,7 +312,9 @@ function handleSync(roomId: string, userId: string, event: SyncEvent): void {
         videoUrl: event.videoUrl,
         currentTime: 0,
         isPlaying: false,
+        waitingBuffer: false,
       });
+      clearResumeAfterBuffer(roomId);
 
       const enriched: SyncEvent = {
         ...event,
@@ -238,11 +336,10 @@ function handleSync(roomId: string, userId: string, event: SyncEvent): void {
       return;
     }
     case 'sync-request': {
-      const requester = room.sockets.get(userId);
       const host = room.state.members.find((m) => m.isHost);
       if (host) {
         const hostSocketId = room.sockets.get(host.id);
-        if (hostSocketId && hostSocketId !== requester) {
+        if (hostSocketId && host.id !== userId) {
           io.to(hostSocketId).emit('message', {
             type: 'sync',
             sync: { ...event, type: 'sync-request' },
@@ -282,6 +379,28 @@ function handleSync(roomId: string, userId: string, event: SyncEvent): void {
   socketBroadcast(roomId, userId, enriched);
 }
 
+function broadcastPause(roomId: string, fromUserId: string, timestamp: number): void {
+  const event: SyncEvent = {
+    type: 'pause',
+    roomId,
+    userId: fromUserId,
+    timestamp,
+    serverTime: Date.now(),
+  };
+  io.to(roomId).emit('message', { type: 'sync', sync: event });
+}
+
+function broadcastPlay(roomId: string, fromUserId: string, timestamp: number): void {
+  const event: SyncEvent = {
+    type: 'play',
+    roomId,
+    userId: fromUserId,
+    timestamp,
+    serverTime: Date.now(),
+  };
+  io.to(roomId).emit('message', { type: 'sync', sync: event });
+}
+
 function socketBroadcast(roomId: string, fromUserId: string, event: SyncEvent): void {
   const room = getRoom(roomId);
   if (!room) return;
@@ -304,7 +423,9 @@ function handleDisconnect(socketId: string): void {
   sessions.delete(socketId);
 
   if (state) {
-    io.to(session.roomId).emit('message', { type: 'members-updated', room: state });
+    electHost(session.roomId);
+    const updated = getRoom(session.roomId)?.state ?? state;
+    io.to(session.roomId).emit('message', { type: 'members-updated', room: updated });
   }
 }
 

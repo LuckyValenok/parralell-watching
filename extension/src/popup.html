@@ -17,14 +17,24 @@
         </div>
       </div>
 
+      <div id="conn-banner" class="conn-banner hidden" hidden></div>
+
       <div id="status" class="status disconnected">Не подключено</div>
       <p id="role" class="role">Создайте комнату на сайте — расширение подключится само</p>
+
+      <div id="members-panel" class="members-panel hidden" hidden>
+        <p class="members-title">Участники</p>
+        <ul id="members-list" class="members-list"></ul>
+      </div>
 
       <label for="room">Код комнаты</label>
       <input id="room" type="text" placeholder="ABC123" maxlength="6" />
 
       <label for="name">Ваше имя</label>
       <input id="name" type="text" placeholder="Гость" maxlength="24" />
+
+      <label for="password">Пароль</label>
+      <input id="password" type="password" placeholder="Если комната приватная" maxlength="32" autocomplete="current-password" />
 
       <button id="connect" class="btn primary">Подключиться</button>
       <button id="disconnect" class="btn secondary hidden">Отключиться</button>

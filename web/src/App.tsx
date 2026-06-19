@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Chat } from './Chat';
 import { useRoom } from './useRoom';
 import { isSupportedWatchUrl } from './mirrors';
+import type { ConnectionStatus } from './types';
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -11,27 +12,71 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+function connectionLabel(status: ConnectionStatus): string {
+  switch (status) {
+    case 'connected':
+      return 'Онлайн';
+    case 'reconnecting':
+      return 'Переподключение...';
+    case 'connecting':
+      return 'Подключение...';
+    default:
+      return 'Нет связи';
+  }
+}
+
 function openedVideoStorageKey(roomId: string): string {
   return `pw-opened-video:${roomId}`;
 }
 
 export default function App() {
-  const { room, userId, error, connected, chatMessages, createRoom, joinRoom, leaveRoom, setVideoUrl, sendChat, sendReaction } =
-    useRoom();
+  const {
+    room,
+    userId,
+    error,
+    errorCode,
+    connectionStatus,
+    chatMessages,
+    createRoom,
+    joinRoom,
+    leaveRoom,
+    setVideoUrl,
+    transferHost,
+    sendChat,
+    sendReaction,
+  } = useRoom();
   const [userName, setUserName] = useState('');
   const [joinCode, setJoinCode] = useState('');
+  const [createPassword, setCreatePassword] = useState('');
+  const [joinPassword, setJoinPassword] = useState('');
   const [videoUrl, setVideoUrlLocal] = useState('');
   const [copied, setCopied] = useState(false);
   const pendingWatchTab = useRef<Window | null>(null);
   const openedVideoUrl = useRef<string | null>(null);
+  const autoJoinRef = useRef(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('room');
+    const name = params.get('name');
     if (code) setJoinCode(code.toUpperCase());
+    if (name) setUserName(decodeURIComponent(name));
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('room');
+    const name = params.get('name');
+    if (!code || !name || room || autoJoinRef.current) return;
+    if (connectionStatus !== 'connected') return;
+
+    autoJoinRef.current = true;
+    joinRoom(code.toUpperCase(), name, joinPassword || undefined);
+  }, [connectionStatus, room, joinRoom, joinPassword]);
+
   const isHost = room?.members.find((m) => m.id === userId)?.isHost ?? false;
+  const onlineCount = room?.members.filter((m) => m.connected).length ?? 0;
+  const bufferingMembers = room?.members.filter((m) => m.connected && m.buffering) ?? [];
 
   useEffect(() => {
     if (!room || !userId) {
@@ -73,7 +118,7 @@ export default function App() {
 
   const handleJoin = () => {
     pendingWatchTab.current = window.open('about:blank', '_blank');
-    joinRoom(joinCode, userName || 'Гость');
+    joinRoom(joinCode, userName || 'Гость', joinPassword || undefined);
   };
 
   const copyCode = async () => {
@@ -85,7 +130,10 @@ export default function App() {
 
   const copyLink = async () => {
     if (!room) return;
-    const url = `${window.location.origin}${import.meta.env.BASE_URL}?room=${room.id}`;
+    const name = room.members.find((m) => m.id === userId)?.name ?? userName;
+    const params = new URLSearchParams({ room: room.id });
+    if (name) params.set('name', name);
+    const url = `${window.location.origin}${import.meta.env.BASE_URL}?${params.toString()}`;
     await navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -94,6 +142,10 @@ export default function App() {
   if (!room) {
     return (
       <div className="app">
+        {connectionStatus === 'reconnecting' && (
+          <div className="reconnect-banner">Переподключение к серверу...</div>
+        )}
+
         <header className="hero">
           <div className="logo">▶</div>
           <h1>Parallel Watching</h1>
@@ -111,10 +163,21 @@ export default function App() {
             maxLength={24}
           />
 
+          <label htmlFor="create-password">Пароль комнаты (необязательно)</label>
+          <input
+            id="create-password"
+            type="password"
+            placeholder="Приватная комната"
+            value={createPassword}
+            onChange={(e) => setCreatePassword(e.target.value)}
+            maxLength={32}
+            autoComplete="new-password"
+          />
+
           <button
             className="btn primary"
-            onClick={() => createRoom(userName || 'Гость')}
-            disabled={!connected}
+            onClick={() => createRoom(userName || 'Гость', createPassword || undefined)}
+            disabled={connectionStatus !== 'connected'}
           >
             Создать комнату
           </button>
@@ -133,16 +196,27 @@ export default function App() {
             maxLength={6}
           />
 
+          <label htmlFor="join-password">Пароль</label>
+          <input
+            id="join-password"
+            type="password"
+            placeholder={errorCode === 'password-required' ? 'Нужен пароль' : 'Если комната приватная'}
+            value={joinPassword}
+            onChange={(e) => setJoinPassword(e.target.value)}
+            maxLength={32}
+            autoComplete="current-password"
+          />
+
           <button
             className="btn secondary"
             onClick={handleJoin}
-            disabled={!connected || joinCode.length < 4}
+            disabled={connectionStatus !== 'connected' || joinCode.length < 4}
           >
             Присоединиться
           </button>
 
           {error && <p className="error">{error}</p>}
-          {!connected && <p className="hint">Подключение к серверу...</p>}
+          {connectionStatus === 'connecting' && <p className="hint">Подключение к серверу...</p>}
         </div>
 
         <section className="steps">
@@ -150,7 +224,7 @@ export default function App() {
           <ol>
             <li>Создайте комнату — расширение подключится автоматически</li>
             <li>Откройте фильм на HDRezka (rezka.fi и другие зеркала)</li>
-            <li>Друзья вводят код комнаты на сайте или в расширении</li>
+            <li>Отправьте друзьям ссылку с кодом комнаты</li>
             <li>Play, pause и серии синхронизируются у всех</li>
           </ol>
         </section>
@@ -160,17 +234,33 @@ export default function App() {
 
   return (
     <div className="app">
+      {connectionStatus === 'reconnecting' && (
+        <div className="reconnect-banner">Связь потеряна — переподключение...</div>
+      )}
+
       <header className="room-header">
         <div>
-          <h1>Комната {room.id}</h1>
-          <span className={`status ${connected ? 'online' : 'offline'}`}>
-            {connected ? 'Онлайн' : 'Переподключение...'}
+          <h1>
+            Комната {room.id}
+            {room.hasPassword && <span className="room-lock" title="Приватная комната">🔒</span>}
+          </h1>
+          <span className={`status ${connectionStatus === 'connected' ? 'online' : 'offline'}`}>
+            {connectionLabel(connectionStatus)}
           </span>
         </div>
         <button className="btn ghost" onClick={leaveRoom}>
           Выйти
         </button>
       </header>
+
+      {room.waitingBuffer && (
+        <div className="buffer-banner">
+          ⏳ Ждём загрузки
+          {bufferingMembers.length > 0
+            ? `: ${bufferingMembers.map((m) => m.name).join(', ')}`
+            : ' участников'}
+        </div>
+      )}
 
       <div className="room-grid">
         <div className="card">
@@ -181,22 +271,43 @@ export default function App() {
               {copied ? 'Скопировано!' : 'Копировать код'}
             </button>
             <button className="btn secondary" onClick={copyLink}>
-              Копировать ссылку
+              Ссылка для входа
             </button>
           </div>
+          <p className="hint">Ссылка откроет сайт и подставит имя — останется нажать «Присоединиться»</p>
         </div>
 
         <div className="card">
-          <h2>Участники ({room.members.length})</h2>
+          <h2>
+            Участники ({onlineCount} онлайн / {room.members.length})
+          </h2>
           <ul className="members">
             {room.members.map((m) => (
               <li key={m.id} className={m.id === userId ? 'me' : ''}>
-                <span className="member-name">
-                  {m.name}
-                  {m.isHost && <span className="badge">Хост</span>}
-                  {m.id === userId && <span className="badge you">Вы</span>}
-                </span>
-                <span className={`dot ${m.connected ? 'online' : 'offline'}`} />
+                <div className="member-main">
+                  <span className="member-name">
+                    {m.name}
+                    {m.isHost && <span className="badge">Хост</span>}
+                    {m.id === userId && <span className="badge you">Вы</span>}
+                  </span>
+                  <span className="member-tags">
+                    {m.onPlayer && <span className="member-tag player">на плеере</span>}
+                    {m.buffering && <span className="member-tag buffering">буфер</span>}
+                  </span>
+                </div>
+                <div className="member-actions">
+                  {isHost && m.id !== userId && m.connected && (
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => transferHost(m.id)}
+                      title="Передать роль хоста"
+                    >
+                      → хост
+                    </button>
+                  )}
+                  <span className={`dot ${m.connected ? 'online' : 'offline'}`} title={m.connected ? 'Онлайн' : 'Оффлайн'} />
+                </div>
               </li>
             ))}
           </ul>
@@ -232,9 +343,7 @@ export default function App() {
         {!isHost && room.videoUrl && (
           <div className="card full-width">
             <h2>Видео</h2>
-            <p>
-              Ссылка открывается автоматически. Если вкладка не появилась — откройте вручную:
-            </p>
+            <p>Ссылка открывается автоматически. Если вкладка не появилась — откройте вручную:</p>
             <a className="video-link" href={room.videoUrl} target="_blank" rel="noreferrer">
               {room.videoUrl}
             </a>
@@ -245,13 +354,13 @@ export default function App() {
           <h2>Статус воспроизведения</h2>
           <div className="playback-status">
             <span className={`play-indicator ${room.isPlaying ? 'playing' : 'paused'}`}>
-              {room.isPlaying ? '▶ Играет' : '⏸ Пауза'}
+              {room.waitingBuffer ? '⏳ Ожидание' : room.isPlaying ? '▶ Играет' : '⏸ Пауза'}
             </span>
             <span className="time">{formatTime(room.currentTime)}</span>
           </div>
           <p className="hint">
             {isHost
-              ? 'Откройте HDRezka — расширение уже знает, что вы хост. Управляйте плеером как обычно.'
+              ? 'Откройте HDRezka — расширение знает, что вы хост. При буферизации у гостей все ставятся на паузу.'
               : 'Видео откроется автоматически — расширение подключится к комнате само.'}
           </p>
         </div>
@@ -259,7 +368,7 @@ export default function App() {
         <Chat
           messages={chatMessages}
           userId={userId}
-          connected={connected}
+          connected={connectionStatus === 'connected'}
           onSend={sendChat}
           onReaction={sendReaction}
         />

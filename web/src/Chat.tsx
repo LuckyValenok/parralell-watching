@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { notifyChatMessage, playChatNotificationSound } from '../../shared/chat-notify.js';
 import {
   CHAT_QUICK_EMOJIS,
   CHAT_REACTION_EMOJIS,
@@ -155,6 +156,7 @@ export function Chat({ messages, userId, connected, onSend, onReaction }: ChatPr
   const listRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const reactionHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevCountRef = useRef(0);
 
   useEffect(
     () => () => {
@@ -162,6 +164,21 @@ export function Chat({ messages, userId, connected, onSend, onReaction }: ChatPr
     },
     []
   );
+
+  useEffect(() => {
+    if (messages.length <= prevCountRef.current) {
+      prevCountRef.current = messages.length;
+      return;
+    }
+    const latest = messages[messages.length - 1];
+    prevCountRef.current = messages.length;
+    if (!latest || latest.userId === userId) return;
+
+    playChatNotificationSound();
+    if (document.hidden) {
+      notifyChatMessage(`${latest.userName}`, latest.text.slice(0, 120));
+    }
+  }, [messages, userId]);
 
   useEffect(() => {
     const list = listRef.current;

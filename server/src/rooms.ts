@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import type { ChatMessage, RoomMember, RoomState } from './types.js';
 
@@ -9,9 +10,15 @@ interface Room {
   state: RoomState;
   sockets: Map<string, string>;
   chatHistory: ChatMessage[];
+  passwordHash: string | null;
+  resumeAfterBuffer: boolean;
 }
 
 const rooms = new Map<string, Room>();
+
+function hashPassword(password: string): string {
+  return createHash('sha256').update(password.trim()).digest('hex');
+}
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -22,35 +29,68 @@ function generateRoomCode(): string {
   return rooms.has(code) ? generateRoomCode() : code;
 }
 
-export function createRoom(userName: string): { room: RoomState; userId: string } {
-  const roomId = generateRoomCode();
-  const userId = uuidv4();
-  const member: RoomMember = {
-    id: userId,
-    name: userName,
-    isHost: true,
-    connected: true,
-  };
-
-  const state: RoomState = {
+function baseState(roomId: string, members: RoomMember[]): RoomState {
+  return {
     id: roomId,
     videoUrl: null,
     isPlaying: false,
     currentTime: 0,
     updatedAt: Date.now(),
-    members: [member],
+    members,
+    hasPassword: false,
+    waitingBuffer: false,
+  };
+}
+
+export function createRoom(
+  userName: string,
+  password?: string
+): { room: RoomState; userId: string } {
+  const roomId = generateRoomCode();
+  const userId = uuidv4();
+  const trimmedPassword = password?.trim();
+  const member: RoomMember = {
+    id: userId,
+    name: userName,
+    isHost: true,
+    connected: true,
+    buffering: false,
+    onPlayer: false,
   };
 
-  rooms.set(roomId, { state, sockets: new Map(), chatHistory: [] });
+  const state = baseState(roomId, [member]);
+  state.hasPassword = Boolean(trimmedPassword);
+
+  rooms.set(roomId, {
+    state,
+    sockets: new Map(),
+    chatHistory: [],
+    passwordHash: trimmedPassword ? hashPassword(trimmedPassword) : null,
+    resumeAfterBuffer: false,
+  });
   return { room: state, userId };
+}
+
+export function verifyRoomPassword(roomId: string, password?: string): boolean {
+  const room = rooms.get(roomId.toUpperCase());
+  if (!room) return false;
+  if (!room.passwordHash) return true;
+  if (!password?.trim()) return false;
+  return room.passwordHash === hashPassword(password);
 }
 
 export function joinRoom(
   roomId: string,
-  userName: string
-): { room: RoomState; userId: string } | null {
+  userName: string,
+  password?: string
+): { room: RoomState; userId: string } | 'not-found' | 'wrong-password' | 'password-required' {
   const room = rooms.get(roomId.toUpperCase());
-  if (!room) return null;
+  if (!room) return 'not-found';
+
+  if (room.passwordHash) {
+    if (!password?.trim()) return 'password-required';
+    if (room.passwordHash !== hashPassword(password)) return 'wrong-password';
+  }
 
   const userId = uuidv4();
   const member: RoomMember = {
@@ -58,6 +98,8 @@ export function joinRoom(
     name: userName,
     isHost: false,
     connected: true,
+    buffering: false,
+    onPlayer: false,
   };
 
   room.state.members.push(member);
@@ -70,10 +112,52 @@ export function bindSocket(roomId: string, userId: string, socketId: string): vo
   room.sockets.set(userId, socketId);
 }
 
+export function electHost(roomId: string): RoomState | null {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+
+  const hasHost = room.state.members.some((m) => m.isHost && m.connected);
+  if (hasHost) return room.state;
+
+  const next =
+    room.state.members.find((m) => m.connected && m.onPlayer) ??
+    room.state.members.find((m) => m.connected);
+
+  if (!next) return room.state;
+
+  for (const m of room.state.members) {
+    m.isHost = m.id === next.id;
+  }
+  room.state.updatedAt = Date.now();
+  return room.state;
+}
+
+export function transferHost(
+  roomId: string,
+  fromUserId: string,
+  toUserId: string
+): RoomState | 'not-host' | 'member-not-found' | null {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+
+  const from = room.state.members.find((m) => m.id === fromUserId);
+  if (!from?.isHost) return 'not-host';
+
+  const to = room.state.members.find((m) => m.id === toUserId && m.connected);
+  if (!to) return 'member-not-found';
+
+  for (const m of room.state.members) {
+    m.isHost = m.id === toUserId;
+  }
+  room.state.updatedAt = Date.now();
+  return room.state;
+}
+
 export function leaveRoom(roomId: string, userId: string): RoomState | null {
   const room = rooms.get(roomId);
   if (!room) return null;
 
+  const wasHost = room.state.members.find((m) => m.id === userId)?.isHost;
   room.sockets.delete(userId);
   room.state.members = room.state.members.filter((m) => m.id !== userId);
 
@@ -82,11 +166,11 @@ export function leaveRoom(roomId: string, userId: string): RoomState | null {
     return null;
   }
 
-  const hasHost = room.state.members.some((m) => m.isHost);
-  if (!hasHost) {
-    room.state.members[0].isHost = true;
+  if (wasHost) {
+    electHost(roomId);
   }
 
+  checkBufferResume(roomId);
   return room.state;
 }
 
@@ -96,7 +180,7 @@ export function getRoom(roomId: string): Room | undefined {
 
 export function updateRoomState(
   roomId: string,
-  update: Partial<Pick<RoomState, 'videoUrl' | 'isPlaying' | 'currentTime'>>
+  update: Partial<Pick<RoomState, 'videoUrl' | 'isPlaying' | 'currentTime' | 'waitingBuffer'>>
 ): RoomState | null {
   const room = rooms.get(roomId);
   if (!room) return null;
@@ -104,6 +188,7 @@ export function updateRoomState(
   if (update.videoUrl !== undefined) room.state.videoUrl = update.videoUrl;
   if (update.isPlaying !== undefined) room.state.isPlaying = update.isPlaying;
   if (update.currentTime !== undefined) room.state.currentTime = update.currentTime;
+  if (update.waitingBuffer !== undefined) room.state.waitingBuffer = update.waitingBuffer;
   room.state.updatedAt = Date.now();
 
   return room.state;
@@ -118,9 +203,100 @@ export function setMemberConnected(
   if (!room) return null;
 
   const member = room.state.members.find((m) => m.id === userId);
-  if (member) member.connected = connected;
+  if (member) {
+    member.connected = connected;
+    if (!connected) {
+      member.buffering = false;
+      member.onPlayer = false;
+    }
+  }
+
+  if (!connected) {
+    const wasHost = member?.isHost;
+    if (wasHost) electHost(roomId);
+    checkBufferResume(roomId);
+  }
 
   return room.state;
+}
+
+export function setMemberOnPlayer(
+  roomId: string,
+  userId: string,
+  onPlayer: boolean
+): RoomState | null {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+
+  const member = room.state.members.find((m) => m.id === userId);
+  if (member) member.onPlayer = onPlayer;
+
+  return room.state;
+}
+
+export function setMemberBuffering(
+  roomId: string,
+  userId: string,
+  buffering: boolean
+): { state: RoomState; pausedAll: boolean; resumedAll: boolean } | null {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+
+  const member = room.state.members.find((m) => m.id === userId);
+  if (!member) return null;
+
+  member.buffering = buffering;
+
+  let pausedAll = false;
+  let resumedAll = false;
+
+  if (buffering) {
+    if (room.state.isPlaying && !room.state.waitingBuffer) {
+      room.state.waitingBuffer = true;
+      room.resumeAfterBuffer = true;
+      updateRoomState(roomId, { isPlaying: false, waitingBuffer: true });
+      pausedAll = true;
+    }
+  } else {
+    const anyBuffering = room.state.members.some((m) => m.connected && m.buffering);
+    if (room.state.waitingBuffer && !anyBuffering) {
+      resumedAll = tryResumeAfterBuffer(roomId);
+    }
+  }
+
+  return { state: room.state, pausedAll, resumedAll };
+}
+
+function tryResumeAfterBuffer(roomId: string): boolean {
+  const room = rooms.get(roomId);
+  if (!room || !room.state.waitingBuffer) return false;
+
+  const anyBuffering = room.state.members.some((m) => m.connected && m.buffering);
+  if (anyBuffering) return false;
+
+  const shouldResume = room.resumeAfterBuffer;
+  room.state.waitingBuffer = false;
+  room.resumeAfterBuffer = false;
+
+  if (shouldResume) {
+    updateRoomState(roomId, { isPlaying: true });
+    return true;
+  }
+  return false;
+}
+
+export function checkBufferResume(roomId: string): boolean {
+  return tryResumeAfterBuffer(roomId);
+}
+
+export function getResumeAfterBuffer(roomId: string): boolean {
+  const room = rooms.get(roomId);
+  return room?.resumeAfterBuffer ?? false;
+}
+
+export function clearResumeAfterBuffer(roomId: string): void {
+  const room = rooms.get(roomId);
+  if (room) room.resumeAfterBuffer = false;
 }
 
 export function getChatHistory(roomId: string): ChatMessage[] {

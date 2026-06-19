@@ -3,6 +3,8 @@ export interface RoomMember {
   name: string;
   isHost: boolean;
   connected: boolean;
+  buffering?: boolean;
+  onPlayer?: boolean;
 }
 
 export interface RoomState {
@@ -12,6 +14,8 @@ export interface RoomState {
   currentTime: number;
   updatedAt: number;
   members: RoomMember[];
+  hasPassword: boolean;
+  waitingBuffer: boolean;
 }
 
 export type SyncEventType =
@@ -23,7 +27,9 @@ export type SyncEventType =
   | 'sync-state'
   | 'video-url'
   | 'member-join'
-  | 'member-leave';
+  | 'member-leave'
+  | 'buffer-start'
+  | 'buffer-end';
 
 export interface SyncEvent {
   type: SyncEventType;
@@ -45,11 +51,25 @@ export interface ChatMessage {
   reactions?: Record<string, string[]>;
 }
 
+export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+
 export interface ClientMessage {
-  action: 'create-room' | 'join-room' | 'leave-room' | 'sync' | 'set-video-url' | 'chat' | 'chat-reaction';
+  action:
+    | 'create-room'
+    | 'join-room'
+    | 'leave-room'
+    | 'sync'
+    | 'set-video-url'
+    | 'chat'
+    | 'chat-reaction'
+    | 'transfer-host'
+    | 'player-presence';
   roomId?: string;
   userName?: string;
   userId?: string;
+  password?: string;
+  targetUserId?: string;
+  onPlayer?: boolean;
   sync?: SyncEvent;
   videoUrl?: string;
   text?: string;
@@ -71,6 +91,7 @@ export interface ServerMessage {
   room?: RoomState;
   sync?: SyncEvent;
   error?: string;
+  errorCode?: 'wrong-password' | 'password-required' | 'not-host' | 'member-not-found';
   userId?: string;
   chat?: ChatMessage;
   chatHistory?: ChatMessage[];

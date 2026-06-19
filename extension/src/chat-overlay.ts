@@ -5,6 +5,7 @@ import {
   REACTION_PICKER_HIDE_MS,
   type ChatMessage,
 } from '../../shared/chat.js';
+import { notifyChatMessage, playChatNotificationSound } from '../../shared/chat-notify.js';
 
 interface ChatOverlayOptions {
   getUserId: () => string | null;
@@ -562,6 +563,10 @@ export function createChatOverlay(options: ChatOverlayOptions) {
     if (!open && msg.userId !== options.getUserId()) {
       unread += 1;
       updateBadge();
+      playChatNotificationSound();
+      if (document.hidden) {
+        notifyChatMessage(msg.userName, msg.text.slice(0, 120));
+      }
     }
   }
 

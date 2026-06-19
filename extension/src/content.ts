@@ -309,15 +309,21 @@ function findVideo() {
 
 function onVideoReady() {
   if (!videoEl) return;
+  reportPlayerPresence(true);
   updateOverlay('Подключено к плееру');
   browser.runtime.sendMessage({ type: 'request-sync-state' }).catch(() => {});
 }
+
+window.addEventListener('pagehide', () => reportPlayerPresence(false));
 
 function attachListeners() {
   if (!videoEl) return;
   videoEl.addEventListener('play', onPlay);
   videoEl.addEventListener('pause', onPause);
   videoEl.addEventListener('seeked', onSeeked);
+  videoEl.addEventListener('waiting', onWaiting);
+  videoEl.addEventListener('canplay', onBufferEnd);
+  videoEl.addEventListener('playing', onBufferEnd);
 }
 
 function detachListeners() {
@@ -325,9 +331,33 @@ function detachListeners() {
   videoEl.removeEventListener('play', onPlay);
   videoEl.removeEventListener('pause', onPause);
   videoEl.removeEventListener('seeked', onSeeked);
+  videoEl.removeEventListener('waiting', onWaiting);
+  videoEl.removeEventListener('canplay', onBufferEnd);
+  videoEl.removeEventListener('playing', onBufferEnd);
 }
 
 let lastSentTime = 0;
+let isBuffering = false;
+let reportedOnPlayer = false;
+
+function reportPlayerPresence(onPlayer: boolean) {
+  if (onPlayer === reportedOnPlayer) return;
+  reportedOnPlayer = onPlayer;
+  browser.runtime.sendMessage({ type: 'player-presence', onPlayer }).catch(() => {});
+}
+
+function onWaiting() {
+  if (isRemoteUpdate || !videoEl || isBuffering) return;
+  isBuffering = true;
+  browser.runtime.sendMessage({ type: 'local-buffer', buffering: true }).catch(() => {});
+  updateOverlay('⏳ Буферизация — ждём всех');
+}
+
+function onBufferEnd() {
+  if (!isBuffering) return;
+  isBuffering = false;
+  browser.runtime.sendMessage({ type: 'local-buffer', buffering: false }).catch(() => {});
+}
 
 function onPlay() {
   if (isRemoteUpdate || !videoEl) return;
@@ -379,6 +409,20 @@ function handleMessage(message: Record<string, unknown>) {
     message.type === 'chat-clear'
   ) {
     chatOverlay.handleMessage(message);
+    return;
+  }
+  if (message.type === 'connection-status') {
+    const status = message.status as string;
+    if (status === 'reconnecting') updateOverlay('⚠ Переподключение...');
+    else if (status === 'connected') updateOverlay('Связь восстановлена');
+    return;
+  }
+  if (message.type === 'room-updated') {
+    const room = message.room as { waitingBuffer?: boolean; members?: { name: string; buffering?: boolean }[] } | undefined;
+    if (room?.waitingBuffer) {
+      const names = room.members?.filter((m) => m.buffering).map((m) => m.name).join(', ');
+      updateOverlay(names ? `⏳ Ждём: ${names}` : '⏳ Ждём загрузки');
+    }
     return;
   }
   if (message.type !== 'remote-sync') return;
