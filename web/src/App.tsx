@@ -53,26 +53,11 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const pendingWatchTab = useRef<Window | null>(null);
   const openedVideoUrl = useRef<string | null>(null);
-  const autoJoinRef = useRef(false);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('room');
-    const name = params.get('name');
+    const code = new URLSearchParams(window.location.search).get('room');
     if (code) setJoinCode(code.toUpperCase());
-    if (name) setUserName(decodeURIComponent(name));
   }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('room');
-    const name = params.get('name');
-    if (!code || !name || room || autoJoinRef.current) return;
-    if (connectionStatus !== 'connected') return;
-
-    autoJoinRef.current = true;
-    joinRoom(code.toUpperCase(), name, joinPassword || undefined);
-  }, [connectionStatus, room, joinRoom, joinPassword]);
 
   const isHost = room?.members.find((m) => m.id === userId)?.isHost ?? false;
   const onlineCount = room?.members.filter((m) => m.connected).length ?? 0;
@@ -130,10 +115,7 @@ export default function App() {
 
   const copyLink = async () => {
     if (!room) return;
-    const name = room.members.find((m) => m.id === userId)?.name ?? userName;
-    const params = new URLSearchParams({ room: room.id });
-    if (name) params.set('name', name);
-    const url = `${window.location.origin}${import.meta.env.BASE_URL}?${params.toString()}`;
+    const url = `${window.location.origin}${import.meta.env.BASE_URL}?room=${room.id}`;
     await navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -152,68 +134,87 @@ export default function App() {
           <p className="subtitle">Смотрите сериалы и фильмы на HDRezka вместе с друзьями</p>
         </header>
 
-        <div className="card">
-          <label htmlFor="name">Ваше имя</label>
-          <input
-            id="name"
-            type="text"
-            placeholder="Как вас называть?"
-            value={userName}
-            onChange={(e) => setUserName(e.target.value)}
-            maxLength={24}
-          />
+        <div className="card entry-card">
+          <div className="form-field">
+            <label htmlFor="name">Ваше имя</label>
+            <input
+              id="name"
+              type="text"
+              placeholder="Как вас называть?"
+              value={userName}
+              onChange={(e) => setUserName(e.target.value)}
+              maxLength={24}
+            />
+          </div>
 
-          <label htmlFor="create-password">Пароль комнаты (необязательно)</label>
-          <input
-            id="create-password"
-            type="password"
-            placeholder="Приватная комната"
-            value={createPassword}
-            onChange={(e) => setCreatePassword(e.target.value)}
-            maxLength={32}
-            autoComplete="new-password"
-          />
-
-          <button
-            className="btn primary"
-            onClick={() => createRoom(userName || 'Гость', createPassword || undefined)}
-            disabled={connectionStatus !== 'connected'}
-          >
-            Создать комнату
-          </button>
+          <div className="form-section">
+            <p className="form-section-title">Создать комнату</p>
+            <div className="form-field optional">
+              <label htmlFor="create-password">
+                Пароль <span className="optional-mark">· необязательно</span>
+              </label>
+              <input
+                id="create-password"
+                type="password"
+                placeholder="Для приватной комнаты"
+                value={createPassword}
+                onChange={(e) => setCreatePassword(e.target.value)}
+                maxLength={32}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="form-actions">
+              <button
+                className="btn primary"
+                onClick={() => createRoom(userName || 'Гость', createPassword || undefined)}
+                disabled={connectionStatus !== 'connected'}
+              >
+                Создать комнату
+              </button>
+            </div>
+          </div>
 
           <div className="divider">
             <span>или</span>
           </div>
 
-          <label htmlFor="code">Код комнаты</label>
-          <input
-            id="code"
-            type="text"
-            placeholder="ABC123"
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-            maxLength={6}
-          />
-
-          <label htmlFor="join-password">Пароль</label>
-          <input
-            id="join-password"
-            type="password"
-            placeholder={errorCode === 'password-required' ? 'Нужен пароль' : 'Если комната приватная'}
-            value={joinPassword}
-            onChange={(e) => setJoinPassword(e.target.value)}
-            maxLength={32}
-            autoComplete="current-password"
-          />
-
-          <button
-            className="btn secondary"
-            onClick={handleJoin}
-            disabled={connectionStatus !== 'connected' || joinCode.length < 4}
-          >
-            Присоединиться
-          </button>
+          <div className="form-section">
+            <p className="form-section-title">Присоединиться</p>
+            <div className="form-field">
+              <label htmlFor="code">Код комнаты</label>
+              <input
+                id="code"
+                type="text"
+                placeholder="ABC123"
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                maxLength={6}
+              />
+            </div>
+            <div className="form-field optional">
+              <label htmlFor="join-password">
+                Пароль <span className="optional-mark">· если комната приватная</span>
+              </label>
+              <input
+                id="join-password"
+                type="password"
+                placeholder={errorCode === 'password-required' ? 'Введите пароль' : 'Оставьте пустым, если не нужен'}
+                value={joinPassword}
+                onChange={(e) => setJoinPassword(e.target.value)}
+                maxLength={32}
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="form-actions">
+              <button
+                className="btn secondary"
+                onClick={handleJoin}
+                disabled={connectionStatus !== 'connected' || joinCode.length < 4}
+              >
+                Присоединиться
+              </button>
+            </div>
+          </div>
 
           {error && <p className="error">{error}</p>}
           {connectionStatus === 'connecting' && <p className="hint">Подключение к серверу...</p>}
@@ -271,10 +272,9 @@ export default function App() {
               {copied ? 'Скопировано!' : 'Копировать код'}
             </button>
             <button className="btn secondary" onClick={copyLink}>
-              Ссылка для входа
+              {copied ? 'Скопировано!' : 'Копировать ссылку'}
             </button>
           </div>
-          <p className="hint">Ссылка откроет сайт и подставит имя — останется нажать «Присоединиться»</p>
         </div>
 
         <div className="card">

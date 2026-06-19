@@ -29,7 +29,13 @@ label {
   margin-top: 8px;
 }
 
-input {
+.optional-mark {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+input[type='text'],
+input[type='password'] {
   width: 100%;
   padding: 8px 10px;
   background: #1a1a24;

@@ -81,7 +81,8 @@ label {
 }
 
 input[type='text'],
-input[type='url'] {
+input[type='url'],
+input[type='password'] {
   width: 100%;
   padding: 0.75rem 1rem;
   background: var(--bg);
@@ -89,13 +90,58 @@ input[type='url'] {
   border-radius: 8px;
   color: var(--text);
   font-size: 1rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0;
   outline: none;
   transition: border-color 0.2s;
 }
 
 input:focus {
   border-color: var(--accent);
+}
+
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.form-section-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.form-field label {
+  margin-bottom: 0;
+}
+
+.form-field.optional label .optional-mark {
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.form-actions {
+  margin-top: 0.25rem;
+}
+
+.form-actions .btn {
+  width: 100%;
+}
+
+.entry-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 
 .btn {
